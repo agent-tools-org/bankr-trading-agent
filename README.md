@@ -13,9 +13,13 @@ The agent queries Claude Sonnet 4.5, GPT-4o, and Gemini 2.0 Flash in parallel th
 ## Architecture
 
 ```
+Market Data (Uniswap V3 / Base)
+        │
+        ▼
 ┌─────────────────────────────────────────────────────┐
-│                 Bankr LLM Gateway                   │
-│            api.bankr.chat/v1 (OpenAI-compatible)    │
+│              Bankr LLM Gateway                      │
+│         api.bankr.chat/v1 (OpenAI-compatible)       │
+│         One API key → 20+ models                    │
 │     ┌──────────┬──────────┬──────────────────┐      │
 │     │ Claude   │  GPT-4o  │ Gemini 2.0 Flash │      │
 │     │Sonnet 4.5│          │                  │      │
@@ -24,18 +28,24 @@ The agent queries Claude Sonnet 4.5, GPT-4o, and Gemini 2.0 Flash in parallel th
            │          │              │
            ▼          ▼              ▼
      ┌─────────────────────────────────────┐
-     │       Multi-Model Consensus         │
+     │        Consensus Engine             │
      │   Majority vote + weighted conf.    │
      │   2/3+ agreement required           │
      └──────────────────┬──────────────────┘
                         │
               ┌─────────▼──────────┐
-              │   Trade Executor   │
+              │   Trade Execution  │
               │  Uniswap V3 / Base │
               └────────────────────┘
 ```
 
-## Pipeline
+**Market Data → Bankr LLM Gateway (3 models) → Consensus Engine → Trade Execution**
+
+### Multi-Model Consensus
+
+No single model hallucination can cause a bad trade. The agent queries Claude, GPT-4o, and Gemini in parallel through the **Bankr LLM Gateway** — a single API that provides access to 20+ models with one API key. Each model independently analyzes the same market data and returns a directional signal (long / short / neutral) with a confidence score. A trade only executes when **2/3+ models agree** on direction with sufficient confidence. This majority-vote mechanism eliminates single-point-of-failure AI decisions.
+
+### Pipeline
 
 1. **Market Data** — Reads Uniswap V3 pool prices on Base via `viem`
 2. **Multi-Model Query** — Sends data to 3 models via Bankr Gateway (parallel)
@@ -46,9 +56,12 @@ The agent queries Claude Sonnet 4.5, GPT-4o, and Gemini 2.0 Flash in parallel th
 ## Setup
 
 ```bash
+# Install dependencies
 npm install
+
+# Configure environment
 cp .env.example .env
-# Edit .env with your Bankr API key
+# Edit .env with your Bankr API key (get one at https://bankr.chat)
 ```
 
 ## Configuration
@@ -71,6 +84,12 @@ npm start
 
 # Or run directly with ts-node
 npm run dev
+
+# Run demo (reads live WETH/USDC price + multi-model consensus)
+npm run demo
+
+# Run tests
+npm test
 ```
 
 ## Trade Log
@@ -91,6 +110,17 @@ All decisions are logged to `logs/trades.jsonl` with per-model vote breakdowns:
   "shouldTrade": true
 }
 ```
+
+## Demo
+
+Run `npm run demo` to see the agent in action:
+
+1. **Reads live WETH/USDC price** from the Uniswap V3 pool on Base mainnet via `viem`
+2. **Simulates 3-model consensus** with mock responses from Claude, GPT-4o, and Gemini
+3. **Runs the consensus algorithm** — majority vote with confidence weighting
+4. **Saves proof** to `proof/demo.json` with timestamp, ETH price, model votes, and consensus result
+
+No API key required — the demo uses real on-chain data but mock LLM responses to demonstrate the consensus mechanism.
 
 ## Project Structure
 
