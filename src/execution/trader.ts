@@ -14,6 +14,7 @@ import {
   PRIVATE_KEY,
   TRADING_PAIRS,
   UNISWAP_V3_ROUTER,
+  UNISWAP_V3_POOL_ABI,
   SWAP_ROUTER_ABI,
   ERC20_ABI,
 } from "../config";
@@ -25,6 +26,7 @@ export interface TradeRecord {
   tokenIn: string;
   tokenOut: string;
   amountIn: string;
+  amountOutMinimum: string;
   txHash: string | null;
   status: "executed" | "simulated" | "failed";
   error?: string;
@@ -85,34 +87,68 @@ export class Trader {
     const tokenIn = direction === "long" ? pair.token1 : pair.token0;
     const tokenOut = direction === "long" ? pair.token0 : pair.token1;
 
+    // `currentPrice` is expected to be WETH price denominated in USDC (USD).
+    // If it's missing, derive it from the Uniswap V3 pool to avoid zero slippage protection.
+    let ethPrice = currentPrice && currentPrice > 0 ? currentPrice : undefined;
+    if (!ethPrice) {
+      const slot0Result: any = await this.publicClient.readContract({
+        address: pair.pool,
+        abi: UNISWAP_V3_POOL_ABI,
+        functionName: "slot0",
+      });
+
+      const sqrtPriceX96: bigint = slot0Result[0] as bigint;
+
+      // Price (token1 per token0) in human units, same math as `MarketDataCollector`.
+      const Q192 = 2n ** 192n;
+      const PRECISION = 10n ** 18n;
+      const sqrtPriceSq = sqrtPriceX96 * sqrtPriceX96;
+      const decimalDiff = pair.token0.decimals - pair.token1.decimals;
+
+      let priceBigInt: bigint;
+      if (decimalDiff >= 0) {
+        priceBigInt =
+          (sqrtPriceSq * 10n ** BigInt(decimalDiff) * PRECISION) / Q192;
+      } else {
+        priceBigInt =
+          (sqrtPriceSq * PRECISION) / (Q192 * 10n ** BigInt(-decimalDiff));
+      }
+
+      ethPrice = Number(priceBigInt) / Number(PRECISION);
+    }
+
     // Convert USD to proper token amount
     let amountIn: bigint;
     if (tokenIn.symbol === "USDC") {
-      // amountUsd is already in USDC terms
-      amountIn = parseUnits(amountUsd.toString(), tokenIn.decimals);
-    } else if (currentPrice && currentPrice > 0) {
+      // amountUsd is already in USDC terms (6 decimals).
+      amountIn = parseUnits(amountUsd.toFixed(tokenIn.decimals), tokenIn.decimals);
+    } else if (ethPrice && ethPrice > 0) {
       // Convert USD to WETH: amountUsd / ethPrice
-      const wethAmount = amountUsd / currentPrice;
+      const wethAmount = amountUsd / ethPrice;
       amountIn = parseUnits(wethAmount.toFixed(tokenIn.decimals), tokenIn.decimals);
     } else {
-      // Fallback: treat as token amount (legacy behavior with warning)
-      console.warn("[Trader] No price available for WETH conversion, using raw amount");
-      amountIn = parseUnits(amountUsd.toString(), tokenIn.decimals);
+      // As a last resort, interpret `amountUsd` as tokenIn amount.
+      amountIn = parseUnits(amountUsd.toFixed(tokenIn.decimals), tokenIn.decimals);
     }
 
     // Calculate slippage-protected minimum output (1% tolerance)
-    let amountOutMinimum = 0n;
-    if (currentPrice && currentPrice > 0) {
-      if (direction === "long") {
-        // Buying WETH with USDC: expected WETH out ≈ amountUsd / price
-        const expectedWeth = amountUsd / currentPrice;
-        const expectedOut = parseUnits(expectedWeth.toFixed(tokenOut.decimals), tokenOut.decimals);
-        amountOutMinimum = expectedOut * 99n / 100n;
-      } else {
-        // Selling WETH for USDC: expected USDC out ≈ amountUsd
-        const expectedOut = parseUnits(amountUsd.toFixed(tokenOut.decimals), tokenOut.decimals);
-        amountOutMinimum = expectedOut * 99n / 100n;
-      }
+    let amountOutMinimum: bigint;
+    if (direction === "long") {
+      // Buying WETH with USDC: expected WETH out ≈ amountUsd / ethPrice
+      const expectedWeth =
+        ethPrice && ethPrice > 0 ? amountUsd / ethPrice : amountUsd;
+      const expectedOut = parseUnits(
+        expectedWeth.toFixed(tokenOut.decimals),
+        tokenOut.decimals
+      );
+      amountOutMinimum = (expectedOut * 99n) / 100n;
+    } else {
+      // Selling WETH for USDC: expected USDC out ≈ amountUsd
+      const expectedOut = parseUnits(
+        amountUsd.toFixed(tokenOut.decimals),
+        tokenOut.decimals
+      );
+      amountOutMinimum = (expectedOut * 99n) / 100n;
     }
 
     const record: TradeRecord = {
@@ -122,6 +158,7 @@ export class Trader {
       tokenIn: tokenIn.symbol,
       tokenOut: tokenOut.symbol,
       amountIn: formatUnits(amountIn, tokenIn.decimals),
+      amountOutMinimum: formatUnits(amountOutMinimum, tokenOut.decimals),
       txHash: null,
       status: "simulated",
     };

@@ -126,7 +126,13 @@ export class TradingLoop {
     let trade: TradeRecord | null = null;
     if (analysis.shouldTrade) {
       console.log("[4/4] Consensus reached — executing trade...");
-      trade = await this.trader.executeTrade(analysis.consensus.direction as "long" | "short");
+      // Pass the live price so slippage protection and USD-to-token conversion are correct.
+      trade = await this.trader.executeTrade(
+        analysis.consensus.direction as "long" | "short",
+        0,
+        10,
+        price.price
+      );
     } else {
       console.log("[4/4] No consensus — skipping trade.");
     }

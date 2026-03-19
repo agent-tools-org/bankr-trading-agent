@@ -15,6 +15,8 @@ contract MultiModelTradeLog {
     }
 
     Decision[] private _decisions;
+    // Indices of decisions grouped by `keccak256(model)` to avoid unbounded iteration.
+    mapping(bytes32 => uint256[]) private _indicesByModelHash;
 
     event DecisionLogged(
         address indexed agent,
@@ -32,6 +34,8 @@ contract MultiModelTradeLog {
         uint256 confidence,
         string calldata reasoning
     ) external {
+        uint256 index = _decisions.length;
+
         _decisions.push(
             Decision({
                 agent: msg.sender,
@@ -44,6 +48,7 @@ contract MultiModelTradeLog {
             })
         );
 
+        _indicesByModelHash[keccak256(bytes(model))].push(index);
         emit DecisionLogged(msg.sender, model, action, pair, confidence);
     }
 
@@ -60,26 +65,6 @@ contract MultiModelTradeLog {
 
     /// @notice Get indices of decisions matching a given model name
     function getDecisionsByModel(string calldata model) external view returns (uint256[] memory) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < _decisions.length; i++) {
-            if (_strEq(_decisions[i].model, model)) {
-                count++;
-            }
-        }
-
-        uint256[] memory indices = new uint256[](count);
-        uint256 cursor = 0;
-        for (uint256 i = 0; i < _decisions.length; i++) {
-            if (_strEq(_decisions[i].model, model)) {
-                indices[cursor] = i;
-                cursor++;
-            }
-        }
-
-        return indices;
-    }
-
-    function _strEq(string memory a, string memory b) private pure returns (bool) {
-        return keccak256(bytes(a)) == keccak256(bytes(b));
+        return _indicesByModelHash[keccak256(bytes(model))];
     }
 }
