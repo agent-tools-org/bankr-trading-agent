@@ -15,6 +15,7 @@ import {
   TRADING_PAIRS,
   UNISWAP_V3_ROUTER,
   SWAP_ROUTER_ABI,
+  ERC20_ABI,
 } from "../config";
 
 export interface TradeRecord {
@@ -70,11 +71,13 @@ export class Trader {
   /**
    * Execute a swap based on the consensus direction.
    * In dry-run mode, simulates the trade without sending a transaction.
+   * @param currentPrice — current ETH price in USD, used for proper token conversion and slippage.
    */
   async executeTrade(
     direction: "long" | "short",
     pairIndex = 0,
-    amountUsd = 10
+    amountUsd = 10,
+    currentPrice?: number
   ): Promise<TradeRecord> {
     const pair = TRADING_PAIRS[pairIndex];
 
@@ -82,10 +85,35 @@ export class Trader {
     const tokenIn = direction === "long" ? pair.token1 : pair.token0;
     const tokenOut = direction === "long" ? pair.token0 : pair.token1;
 
-    const amountIn = parseUnits(
-      amountUsd.toString(),
-      tokenIn.decimals
-    );
+    // Convert USD to proper token amount
+    let amountIn: bigint;
+    if (tokenIn.symbol === "USDC") {
+      // amountUsd is already in USDC terms
+      amountIn = parseUnits(amountUsd.toString(), tokenIn.decimals);
+    } else if (currentPrice && currentPrice > 0) {
+      // Convert USD to WETH: amountUsd / ethPrice
+      const wethAmount = amountUsd / currentPrice;
+      amountIn = parseUnits(wethAmount.toFixed(tokenIn.decimals), tokenIn.decimals);
+    } else {
+      // Fallback: treat as token amount (legacy behavior with warning)
+      console.warn("[Trader] No price available for WETH conversion, using raw amount");
+      amountIn = parseUnits(amountUsd.toString(), tokenIn.decimals);
+    }
+
+    // Calculate slippage-protected minimum output (1% tolerance)
+    let amountOutMinimum = 0n;
+    if (currentPrice && currentPrice > 0) {
+      if (direction === "long") {
+        // Buying WETH with USDC: expected WETH out ≈ amountUsd / price
+        const expectedWeth = amountUsd / currentPrice;
+        const expectedOut = parseUnits(expectedWeth.toFixed(tokenOut.decimals), tokenOut.decimals);
+        amountOutMinimum = expectedOut * 99n / 100n;
+      } else {
+        // Selling WETH for USDC: expected USDC out ≈ amountUsd
+        const expectedOut = parseUnits(amountUsd.toFixed(tokenOut.decimals), tokenOut.decimals);
+        amountOutMinimum = expectedOut * 99n / 100n;
+      }
+    }
 
     const record: TradeRecord = {
       timestamp: Date.now(),
@@ -109,6 +137,9 @@ export class Trader {
     }
 
     try {
+      // Ensure ERC20 approval for the router
+      await this.ensureApproval(tokenIn.address as Address, amountIn);
+
       const txHash = await this.walletClient.writeContract({
         address: UNISWAP_V3_ROUTER,
         abi: SWAP_ROUTER_ABI,
@@ -120,7 +151,7 @@ export class Trader {
             fee: 3000,
             recipient: this.account.address,
             amountIn,
-            amountOutMinimum: 0n,
+            amountOutMinimum,
             sqrtPriceLimitX96: 0n,
           },
         ],
@@ -138,6 +169,29 @@ export class Trader {
 
     this.tradeHistory.push(record);
     return record;
+  }
+
+  /** Check and approve ERC20 token spending for the Uniswap router. */
+  private async ensureApproval(tokenAddress: Address, amount: bigint): Promise<void> {
+    if (!this.account || !this.walletClient) return;
+
+    const allowance = await this.publicClient.readContract({
+      address: tokenAddress,
+      abi: ERC20_ABI,
+      functionName: "allowance",
+      args: [this.account.address, UNISWAP_V3_ROUTER],
+    });
+
+    if ((allowance as bigint) < amount) {
+      const txHash = await this.walletClient.writeContract({
+        address: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [UNISWAP_V3_ROUTER, amount],
+      });
+      console.log(`[Trader] Approval TX sent: ${txHash}`);
+      await this.publicClient.waitForTransactionReceipt({ hash: txHash });
+    }
   }
 
   /** Get portfolio state (balances are estimated from trade history). */

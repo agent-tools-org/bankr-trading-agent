@@ -1,4 +1,4 @@
-import { BankrClient, ConsensusResult, ModelResponse } from "../llm/bankr-client";
+import { BankrClient, ConsensusResult, ModelResponse, parseTradeVote } from "../llm/bankr-client";
 import { MarketDataCollector } from "../data/market-data";
 import { CONSENSUS_MODELS, MIN_CONSENSUS_CONFIDENCE, SupportedModel } from "../config";
 
@@ -81,36 +81,7 @@ export class MultiModelAnalyzer {
 
   /** Parse a single model response into a structured vote. */
   private parseVote(response: ModelResponse): ModelVote {
-    const text = response.content;
-    const lower = text.toLowerCase();
-
-    let direction: "long" | "short" | "neutral" = "neutral";
-    const dirMatch = lower.match(/direction[:\s]*(long|short|neutral)/);
-    if (dirMatch) {
-      direction = dirMatch[1] as "long" | "short" | "neutral";
-    } else if (/\b(long|buy|bullish)\b/.test(lower)) {
-      direction = "long";
-    } else if (/\b(short|sell|bearish)\b/.test(lower)) {
-      direction = "short";
-    }
-
-    let confidence = 0.5;
-    const confMatch = lower.match(/confidence[:\s]*(\d+(?:\.\d+)?)\s*%?/);
-    if (confMatch) {
-      const val = parseFloat(confMatch[1]);
-      confidence = val > 1 ? val / 100 : val;
-    }
-
-    let reasoning = "";
-    const reasonMatch = text.match(/REASONING[:\s]*(.*)/i);
-    if (reasonMatch) {
-      reasoning = reasonMatch[1].trim();
-    } else {
-      // Use last meaningful line as reasoning
-      const lines = text.split("\n").filter((l) => l.trim().length > 10);
-      reasoning = lines[lines.length - 1]?.trim() ?? "";
-    }
-
+    const { direction, confidence, reasoning } = parseTradeVote(response.content);
     return { model: response.model, direction, confidence, reasoning };
   }
 }

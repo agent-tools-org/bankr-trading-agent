@@ -169,15 +169,22 @@ export class MarketDataCollector {
     return this.history.get(pairName) ?? [];
   }
 
-  /** Convert sqrtPriceX96 to human-readable price. */
+  /** Convert sqrtPriceX96 to human-readable price using BigInt arithmetic. */
   private sqrtPriceToPrice(
     sqrtPriceX96: bigint,
     decimals0: number,
     decimals1: number
   ): number {
-    const num = Number(sqrtPriceX96);
-    const price = (num / 2 ** 96) ** 2;
-    const adjusted = price * 10 ** (decimals0 - decimals1);
-    return adjusted;
+    const Q192 = 2n ** 192n;
+    const PRECISION = 10n ** 18n;
+    const sqrtPriceSq = sqrtPriceX96 * sqrtPriceX96;
+    const decimalDiff = decimals0 - decimals1;
+    let priceBigInt: bigint;
+    if (decimalDiff >= 0) {
+      priceBigInt = (sqrtPriceSq * 10n ** BigInt(decimalDiff) * PRECISION) / Q192;
+    } else {
+      priceBigInt = (sqrtPriceSq * PRECISION) / (Q192 * 10n ** BigInt(-decimalDiff));
+    }
+    return Number(priceBigInt) / Number(PRECISION);
   }
 }

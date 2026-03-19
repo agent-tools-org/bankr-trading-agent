@@ -143,19 +143,47 @@ export class BankrClient {
 
   /** Parse a model's text response into a structured trade signal. */
   private parseTradeSignal(text: string): { direction: "long" | "short" | "neutral"; confidence: number } {
-    const lower = text.toLowerCase();
-
-    let direction: "long" | "short" | "neutral" = "neutral";
-    if (/\b(long|buy|bullish)\b/.test(lower)) direction = "long";
-    else if (/\b(short|sell|bearish)\b/.test(lower)) direction = "short";
-
-    let confidence = 0.5;
-    const confMatch = lower.match(/confidence[:\s]*(\d+(?:\.\d+)?)\s*%?/);
-    if (confMatch) {
-      const val = parseFloat(confMatch[1]);
-      confidence = val > 1 ? val / 100 : val;
-    }
-
+    const { direction, confidence } = parseTradeVote(text);
     return { direction, confidence };
   }
+}
+
+/**
+ * Unified parser for LLM trade vote responses.
+ * Extracts direction, confidence, and reasoning from free-form text.
+ */
+export function parseTradeVote(text: string): {
+  direction: "long" | "short" | "neutral";
+  confidence: number;
+  reasoning: string;
+} {
+  const lower = text.toLowerCase();
+
+  let direction: "long" | "short" | "neutral" = "neutral";
+  const dirMatch = lower.match(/direction[:\s]*(long|short|neutral)/);
+  if (dirMatch) {
+    direction = dirMatch[1] as "long" | "short" | "neutral";
+  } else if (/\b(long|buy|bullish)\b/.test(lower)) {
+    direction = "long";
+  } else if (/\b(short|sell|bearish)\b/.test(lower)) {
+    direction = "short";
+  }
+
+  let confidence = 0.5;
+  const confMatch = lower.match(/confidence[:\s]*(\d+(?:\.\d+)?)\s*%?/);
+  if (confMatch) {
+    const val = parseFloat(confMatch[1]);
+    confidence = val > 1 ? val / 100 : val;
+  }
+
+  let reasoning = "";
+  const reasonMatch = text.match(/REASONING[:\s]*(.*)/i);
+  if (reasonMatch) {
+    reasoning = reasonMatch[1].trim();
+  } else {
+    const lines = text.split("\n").filter((l) => l.trim().length > 10);
+    reasoning = lines[lines.length - 1]?.trim() ?? "";
+  }
+
+  return { direction, confidence, reasoning };
 }
