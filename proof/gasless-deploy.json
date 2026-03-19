@@ -1,0 +1,13 @@
+{
+  "deployer": "0x3614A5bD7f206d4f9e89c6aEdC4d774e6d534D78",
+  "contractName": "MultiModelTradeLog",
+  "contractAddress": "0xada288fc4974e40928d6f88f8ce7bb095ec4a48e",
+  "deployTxHash": "0xd359bb4d799c38b117f99e81ffa75f4e6967db9e684fdc9669acd91a014f9cf9",
+  "deployBlock": 17995080,
+  "gasUsed": 5000000,
+  "effectiveGasPrice": 0,
+  "explorerUrl": "https://sepoliascan.status.network/address/0xada288fc4974e40928d6f88f8ce7bb095ec4a48e",
+  "network": "Status Network Sepolia",
+  "chainId": 1660990954,
+  "timestamp": "2026-03-19T02:30:59.938Z"
+}
